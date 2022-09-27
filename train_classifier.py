@@ -8,6 +8,8 @@ from src.utils import setup_device, TensorboardWriter, MetricTracker, load_check
 import random
 from src.dataset import *
 import os
+import wandb
+wandb.init(project="osr-vit", entity="raember")
 
 def train_epoch(epoch, model, data_loader, criterion, optimizer, lr_scheduler, metrics, device=torch.device('cpu')):
     metrics.reset()
@@ -30,6 +32,7 @@ def train_epoch(epoch, model, data_loader, criterion, optimizer, lr_scheduler, m
         if metrics.writer is not None:
             metrics.writer.set_step((epoch - 1) * len(data_loader) + batch_idx)
         metrics.update('loss', loss.item())
+        wandb.log({"loss": loss.item()})
 
         if  batch_idx % 100 == 10:
             if config.num_classes >= 5:
@@ -122,6 +125,7 @@ def main(config, device, device_ids):
              attn_dropout_rate=config.attn_dropout_rate,
              dropout_rate=config.dropout_rate,
              )
+    wandb.watch(model)
 
     # load checkpoint
     if config.checkpoint_path:
@@ -189,6 +193,11 @@ def main(config, device, device_ids):
     best_acc = 0.0
     best_epoch = 0
     config.epochs = config.train_steps // len(train_dataloader)
+    wandb.config = {
+        "learning_rate": config.lr,
+        "epochs": config.epochs,
+        "batch_size": config.batch_size
+    }
     print("length of train loader : ",len(train_dataloader),' and total epoch ',config.epochs)
     for epoch in range(1, config.epochs + 1):
         for param_group in optimizer.param_groups:

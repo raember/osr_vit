@@ -22,6 +22,7 @@ def get_train_config():
     parser.add_argument("--dataset", type=str, default='ImageNet', help="dataset for fine-tunning/evaluation")
     parser.add_argument("--num-classes", type=int, default=1000, help="number of classes in dataset")
     parser.add_argument("--random-seed", type=int, default=42, help="random seed for choosing the training classes")
+    parser.add_argument("--leave-out-class", type=int, default=-1, help="class to leave out")
     parser.add_argument('--model_name', default='vit_base_patch16_224', type=str,
                         help="ViT pre-trained model type")
     parser.add_argument('--eval', action='store_true',help='evaluate on dataset')

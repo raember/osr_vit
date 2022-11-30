@@ -1,12 +1,15 @@
+from pathlib import Path
+from typing import Tuple, List, Dict, Callable, Any, Optional
+
+from PIL import Image
 from torchvision import datasets, transforms
 import torch
 import numpy as np
 import os
 from torchvision.datasets.utils import download_url
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, random_split
 import pandas as pd
-from torchvision.datasets.folder import default_loader
-import pickle
+from torchvision.datasets.folder import default_loader, DatasetFolder
 
 
 def getMNISTDataset(data_path='./data', **args):
@@ -401,6 +404,61 @@ def get_mean_and_std(dataloader):
     std = (channels_squared_sum / num_batches - mean ** 2) ** 0.5
 
     return mean, std
+
+
+BOSTON_DATASETS = {}
+
+class BostonDataset(DatasetFolder):
+    known_classes: List[int]
+
+    def __init__(
+            self,
+            root: str,
+            loader: Callable[[str], Any],
+            known_classes: List[int],
+            extensions: Optional[Tuple[str, ...]] = None,
+            transform: Optional[Callable] = None,
+            target_transform: Optional[Callable] = None,
+            is_valid_file: Optional[Callable[[str], bool]] = None,):
+        self.known_classes = known_classes
+        super(BostonDataset, self).__init__(root, loader, extensions, transform, target_transform, is_valid_file)
+
+    def find_classes(self, directory: str) -> Tuple[List[str], Dict[str, int]]:
+        classes = sorted(entry.name for entry in os.scandir(directory) if entry.is_dir())
+        if not classes:
+            raise FileNotFoundError(f"Couldn't find any class folder in {directory}.")
+
+        classes = [classes[i] for i in self.known_classes]
+        class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
+        return classes, class_to_idx
+
+def getBostonDataset(data_path: str = './data', **kwargs):
+    split = kwargs.get('split', '')
+    global BOSTON_DATASETS
+    known_classes = kwargs.get('known_classes', 'all')
+    key = ','.join(map(str, known_classes))
+    if (dataset := BOSTON_DATASETS.get(key)) is None:
+        transform = transforms.Compose([
+            transforms.CenterCrop((kwargs['image_size'], kwargs['image_size'])),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.7246, 0.6362, 0.7068],
+                std=[0.1283, 0.1897, 0.1410],
+            )
+        ])
+        dataset = BostonDataset(
+            str(Path(data_path, 'boston')),
+            lambda path: Image.open(path),
+            known_classes if known_classes != 'all' else list(range(8)),
+            ('.jpg', '.JPG', '.jpeg', '.JPEG'),
+            transform=transform,
+        )
+        BOSTON_DATASETS[key] = dataset
+    train_len = int(len(dataset) * 0.8)
+    test_len = len(dataset) - train_len
+    train, test = random_split(dataset, [train_len, test_len], generator=torch.Generator().manual_seed(42))
+    return train if split == 'train' else test
+
 
 if __name__ == '__main__':
     from torch.utils.data import DataLoader

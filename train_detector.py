@@ -10,8 +10,6 @@ import random
 from src.dataset import *
 import os
 import wandb
-wandb.init(project="osr-vit", entity="raember")
-wandb.run.name = f"stage_2_{wandb.run.name}"
 
 def run_model(model, loader):
     #run the resnet model
@@ -118,7 +116,6 @@ def main(config, device, device_ids):
              attn_dropout_rate=config.attn_dropout_rate,
              dropout_rate=config.dropout_rate,
              )
-    wandb.watch(model)
 
     # load checkpoint
     if config.checkpoint_path:
@@ -156,10 +153,15 @@ def main(config, device, device_ids):
             total_classes = 10
         elif config.dataset == "TinyImageNet":
             total_classes = 200
+        elif config.dataset == "Boston":
+            total_classes = 8
+            name = f"LOC {config.leave_out_class}"
 
         random.seed(config.random_seed)
         known_classes = random.sample(range(0, total_classes), config.num_classes)
 
+    wandb.init(project="osr-vit", entity="raember", name=name, group=f"{config.dataset} Stage 2")  # os.environ.get('SLURM_JOB_NAME').split('_', maxsplit=2)[-1]
+    wandb.watch(model)
     train_dataset = eval("get{}Dataset".format(config.dataset))(image_size=config.image_size, split='train', data_path=config.data_dir, known_classes=known_classes)
     train_dataloader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=config.num_workers)
     valid_dataset = eval("get{}Dataset".format(config.dataset))(image_size=config.image_size, split='in_test', data_path=config.data_dir, known_classes=known_classes)

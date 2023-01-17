@@ -156,9 +156,12 @@ def main(config, device, device_ids):
         elif config.dataset == "Boston":
             total_classes = 8
             name = f"LOC {config.leave_out_class}"
+            known_classes = list(range(total_classes))
+            known_classes.remove(config.leave_out_class)
 
-        random.seed(config.random_seed)
-        known_classes = random.sample(range(0, total_classes), config.num_classes)
+        if known_classes is None:
+            random.seed(config.random_seed)
+            known_classes = random.sample(range(0, total_classes), config.num_classes)
 
     wandb.init(project="osr-vit", entity="raember", name=name, group=f"{config.dataset} Stage 2")  # os.environ.get('SLURM_JOB_NAME').split('_', maxsplit=2)[-1]
     wandb.watch(model)

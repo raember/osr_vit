@@ -1,6 +1,7 @@
 import argparse
 import codecs
 import json
+import shutil
 
 import torch
 from tqdm import tqdm
@@ -83,12 +84,20 @@ def get_roc_sklearn(xin, xood):
     auroc = skm.roc_auc_score(labels, data)
     return auroc
 
+CHECKS = {}
+
 def main(opt, model):
     file = Path('logs/vit_loc_' + str(opt.lo_classes) + '/test_logits.json')
     if file.exists():
         print(f"Already processed for LOC {opt.lo_classes}")
         return
     ckpt = torch.load(opt.ckpt_file, map_location=torch.device("cpu"))
+    # if ckpt['epoch'] != 3:
+    #     return
+    # global CHECKS
+    # CHECKS[opt.lo_classes] = [*CHECKS.get(opt.lo_classes, []), opt.ckpt_file]
+    # print(ckpt['epoch'], opt.lo_classes)
+    # return
     # load networks
     #model = opt.model
     missing_keys = model.load_state_dict(ckpt['state_dict'], strict=False)
@@ -128,7 +137,7 @@ def main(opt, model):
 
         # load OOD dataset
         print('load out target data: ', opt.out_dataset)
-        if opt.in_dataset == opt.out_dataset:
+        if opt.in_dataset == opt.out_dataset and opt.out_dataset != 'Boston':
             unknown_classes =  list(set(range(total_classes)) -  set(known_classes))
             out_dataset = eval("get{}Dataset".format(opt.in_dataset))(image_size=opt.image_size, split='out_test', data_path=opt.data_dir, known_classes=known_classes)
         else:
@@ -160,25 +169,32 @@ def main(opt, model):
 
     torch.multiprocessing.set_sharing_strategy('file_system')
     print(f"Running model trained on LOC {opt.lo_classes}")
-    in_emb, in_targets, in_sfmx, in_logits = run_model(model,in_dataloader)
+    #in_emb, in_targets, in_sfmx, in_logits = run_model(model,in_dataloader)
 
     out_emb, out_targets, out_sfmx, out_logits = run_model(model,out_dataloader)
-    print(in_emb.shape, out_emb.shape, in_targets.shape, out_targets.shape, classes_mean.shape)
-    embs = torch.cat([in_emb, out_emb, classes_mean], axis=0).numpy()
-    targets = torch.cat([in_targets, out_targets], axis=0).numpy()
-    logits = torch.cat([in_logits, out_logits], axis=0).numpy()
+    #print(in_emb.shape, out_emb.shape, in_targets.shape, out_targets.shape, classes_mean.shape)
+    embs = torch.cat([out_emb, classes_mean], axis=0).numpy()
+    targets = torch.cat([out_targets], axis=0).numpy()
+    logits = torch.cat([out_logits], axis=0).numpy()
+
+    out_dists = euclidean_dist(out_emb, classes_mean)
+    ood_lbl = torch.argmax(out_sfmx, dim=1).cpu()
+    ood_score = [dist[ood_lbl[i]].cpu().tolist() for i, dist in enumerate(out_dists)]
     #np.savez("data.npz", embs=embs, targets=targets)
+    #np.savez("data.npz", embs=embs, targets=targets)
+    #np.savez("data.npz", embs=embs, targets=targets)nss
     store_data = dict()
     store_data["dataset"] = opt.in_dataset
     store_data["leave_out_class"] = opt.lo_classes
+    store_data["ood_score"] = ood_score
     store_data["labels"] = targets.tolist()
     store_data["logits"] = logits.tolist()
+    store_data["checkpoint_path"] = opt.ckpt_file
     file.parent.mkdir(parents=True, exist_ok=True)
     with codecs.open(str(file), 'w', encoding='utf-8') as fp:
         json.dump(store_data, fp,
                   separators=(',', ':'),
-                  sort_keys=True,
-                  indent=4)
+                  sort_keys=True)
     
     
 
@@ -195,36 +211,43 @@ def main(opt, model):
 
 def run_ood_distance(opt):
     experiments_dir = os.path.join(os.getcwd(), 'experiments/save')#specify the root dir
+    experiments_dir = os.path.join(os.getcwd(), f'out/detectors/{opt.out_dataset}')#specify the root dir
     for dir in os.listdir(experiments_dir):
-        if dir == 'osrdetector_data':
-            continue
-        exp_name, dataset, model_arch, _, _, _, num_classes, random_seed, _, _ = dir.split("_")
-        if dataset != opt.in_dataset or exp_name != 'osrdetector':
-            continue
-        if opt.exp_name == exp_name and opt.in_dataset == dataset and opt.in_num_classes == int(num_classes[2:]):
-            opt = eval("get_{}_config".format(model_arch))(opt)
-            model = OODTransformer(
-                     image_size=(opt.image_size, opt.image_size),
-                     patch_size=(opt.patch_size, opt.patch_size),
-                     emb_dim=opt.emb_dim,
-                     mlp_dim=opt.mlp_dim,
-                     num_heads=opt.num_heads,
-                     num_layers=opt.num_layers,
-                     num_classes=opt.in_num_classes,
-                     attn_dropout_rate=opt.attn_dropout_rate,
-                     dropout_rate=opt.dropout_rate,
-                     )
+        # if dir == 'osrdetector_data':
+        #     continue
+        # exp_name, dataset, model_arch, _, _, _, num_classes, random_seed, _, _ = dir.split("_")
+        # if dataset != opt.in_dataset or exp_name != 'osrdetector':
+        #     continue
+        # if opt.exp_name == exp_name and opt.in_dataset == dataset and opt.in_num_classes == int(num_classes[2:]):
+        opt = eval("get_{}_config".format('b16'))(opt)
+        model = OODTransformer(
+                 image_size=(opt.image_size, opt.image_size),
+                 patch_size=(opt.patch_size, opt.patch_size),
+                 emb_dim=opt.emb_dim,
+                 mlp_dim=opt.mlp_dim,
+                 num_heads=opt.num_heads,
+                 num_layers=opt.num_layers,
+                 num_classes=opt.in_num_classes,
+                 attn_dropout_rate=opt.attn_dropout_rate,
+                 dropout_rate=opt.dropout_rate,
+                 )
 
-            ckpt_file = Path(experiments_dir, dir, "checkpoints", "ckpt_epoch_current.pth")
-            if not ckpt_file.is_file():
-                continue
-            print(f"Attempting {ckpt_file}")
-            cfg = json.load(open(os.path.join(experiments_dir, dir, "config.json")))
-            opt.lo_classes = cfg['leave_out_class']
-            opt.ckpt_file = str(ckpt_file)
-            opt.random_seed = int(random_seed[2:])
+        ckpt_file = Path(experiments_dir, dir, "checkpoints", "ckpt_epoch_current.pth")
+        ckpt_file = Path(experiments_dir, dir)
+        if not ckpt_file.is_file():
+            continue
+        print(f"Attempting {ckpt_file}")
+        #cfg = json.load(open(os.path.join(experiments_dir, dir, "config.json")))
+        opt.lo_classes = int(ckpt_file.stem.split('_')[1])  # cfg['leave_out_class']
+        opt.ckpt_file = str(ckpt_file)
+        opt.random_seed = 42  # int(random_seed[2:])
 
-            main(opt, model)
+        main(opt, model)
+    # print(CHECKS)
+    # for loc, ck in CHECKS.items():
+    #     p = Path(f"out/detectors/{opt.out_dataset}/LOC_{loc}_ckpt.pth")
+    #     p.parent.mkdir(parents=True, exist_ok=True)
+    #     shutil.copy(ck[0], p)
 
 
 
